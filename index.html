@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HSC Biology Dungeon — Year 12 Revision</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #050310;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Courier New', monospace;
+}
+canvas {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+</style>
+</head>
+<body>
+<canvas id="c" width="800" height="600"></canvas>
+<script>
+'use strict';
+
+// ================================================================
+//  HSC BIOLOGY DUNGEON  —  Year 12 Revision Game
+// ================================================================
+
+const CV = document.getElementById('c');
+const X  = CV.getContext('2d');
+X.imageSmoothingEnabled = false;
+
+// ── Layout ──────────────────────────────────────────────────────
+const T   = 40;        // tile size (px)
+const GW  = 20;        // grid width (tiles)
+const GH  = 15;        // grid height (tiles)
+
+// ── State machine ───────────────────────────────────────────────
+const S = { TITLE:0, DUNGEON:1, PROMPT:2, BATTLE:3, CHEST:4, WIN:5, OVER:6 };
+let gs = S.TITLE;
+
+// ── Dungeon map ──────────────────────────────────────────────────
+// Hub-and-spoke layout: player starts centre, 6 chambers around the edge.
+// Each chamber entry corridor is guarded by one monster.
+// W=wall  .=floor
+const MAP = [
+  'WWWWWWWWWWWWWWWWWWWW', // row  0
+  'W.....W......W.....W', // row  1   CH0(1-5) | CH1(7-12) | CH2(14-18)
+  'W.....W......W.....W', // row  2
+  'W.....W......W.....W', // row  3
+  'WWW.WWWWWW.WWWWWW.WW', // row  4   M0@(3,4) | M1@(10,4) | M2@(17,4)
+  'W..................W',  // row  5   HUB
+  'W..................W',  // row  6   HUB
+  'W..................W',  // row  7   HUB  ← player starts at (9,7)
+  'W..................W',  // row  8   HUB
+  'W..................W',  // row  9   HUB
+  'WWW.WWWWWW.WWWWWW.WW', // row 10   M3@(3,10) | M4@(10,10) | M5@(17,10)
+  'W.....W......W.....W', // row 11   CH3(1-5) | CH4(7-12) | CH5(14-18)
+  'W.....W......W.....W', // row 12
+  'W.....W......W.....W', // row 13
+  'WWWWWWWWWWWWWWWWWWWW', // row 14
+];
+
+const MAPFIX = MAP;
+
+// ── Chamber positions (chest teleports here after each defeat) ───
+const CHAMBERS = [
+  { x:3,  y:2  },  // CH0 top-left
+  { x:9,  y:2  },  // CH1 top-centre
+  { x:16, y:2  },  // CH2 top-right
+  { x:3,  y:12 },  // CH3 bottom-left
+  { x:9,  y:12 },  // CH4 bottom-centre
+  { x:16, y:12 },  // CH5 bottom-right
+];
+
+let chestChamberIdx = 0;
+let chestPos = { x: CHAMBERS[0].x, y: CHAMBERS[0].y };
+
+function teleportChest(avoidIdx) {
+  let candidates = CHAMBERS.map((_,i) => i).filter(i => i !== avoidIdx);
+  chestChamberIdx = candidates[Math.floor(Math.random() * candidates.length)];
+  chestPos = { x: CHAMBERS[chestChamberIdx].x, y: CHAMBERS[chestChamberIdx].y };
+}
+
+// ── Placeholder questions (replace with real HSC content) ────────
+// Each entry: { q: string, opts: [A,B,C,D], ans: 0-3 }
+const Q_SETS = [
+  // Monster 0 – Pregnancy Hormones  (pool of 12, monster has 8 HP)
+  [
+    { q: 'Which hormone is produced by the placenta after implantation and supports the function of the corpus luteum?',
+      opts: ['Oxytocin','Human Chorionic Gonadotropin (hCG)','Prolactin','Relaxin'], ans: 1 },
+    { q: 'Which hormone is detected by home pregnancy tests?',
+      opts: ['Progesterone','Oestrogen','hCG','Oxytocin'], ans: 2 },
+    { q: 'Progesterone is initially produced by which structure before the placenta takes over?',
+      opts: ['The pituitary gland','The uterine wall','The corpus luteum','The ovarian follicle'], ans: 2 },
+    { q: 'Which hormone inhibits uterine contractions so the uterus can grow as the baby develops?',
+      opts: ['Oxytocin','Relaxin','Progesterone','hCG'], ans: 2 },
+    { q: 'Which hormone stimulates uterine muscle contractions at the start of labour and can be used to induce labour?',
+      opts: ['Progesterone','Relaxin','Prolactin','Oxytocin'], ans: 3 },
+    { q: 'Prolactin and oxytocin are both produced by which gland?',
+      opts: ['The corpus luteum','The placenta','The pituitary gland','The adrenal gland'], ans: 2 },
+    { q: 'What is the primary function of prolactin after birth?',
+      opts: ['Stimulate uterine contractions','Produce breast milk','Maintain the corpus luteum','Soften the cervix'], ans: 1 },
+    { q: 'Which hormone relaxes pelvic joints, softens the cervix, and increases blood flow to the placenta and kidneys?',
+      opts: ['Oestrogen','Oxytocin','hCG','Relaxin'], ans: 3 },
+    { q: 'Which hormone, together with progesterone, stimulates breast growth and milk duct development?',
+      opts: ['hCG','Relaxin','Oestrogen','Prolactin'], ans: 2 },
+    { q: 'Why does lactation not occur during pregnancy despite rising prolactin levels?',
+      opts: ['hCG blocks prolactin receptors','Progesterone inhibits lactation during pregnancy','The placenta destroys prolactin','Relaxin prevents milk production'], ans: 1 },
+    { q: 'Oxytocin triggers the production of which substances that further amplify uterine contractions during labour?',
+      opts: ['Progesterone','Prostaglandins','Relaxin','Oestrogen'], ans: 1 },
+    { q: 'Which hormone helps the uterus grow, maintains its lining, and assists foetal organ development?',
+      opts: ['Prolactin','Relaxin','Oxytocin','Oestrogen'], ans: 3 },
+  ],
+  // Monster 1 – Pedigrees  (pool of 12, monster has 5 HP)
+  [
+    { q: 'In a pedigree diagram, what do squares and circles represent respectively?',
+      opts: ['Affected individuals and unaffected individuals','Males and females','Homozygous and heterozygous individuals','Dominant allele carriers and recessive allele carriers'], ans: 1 },
+    { q: 'In a pedigree, what does a filled (shaded) symbol indicate?',
+      opts: ['The individual is a carrier of a recessive trait','The individual is homozygous dominant','The individual expresses / is affected by the trait being studied','The individual has died'], ans: 2 },
+    { q: 'Two individuals in a pedigree are connected by a double horizontal line. What does this signify?',
+      opts: ['They are both affected by the trait','They are siblings from the same parents','They are blood relatives (consanguineous mating)','They are both confirmed carriers of a recessive allele'], ans: 2 },
+    { q: 'Which observation in a pedigree is a strong indicator that a trait is X-linked recessive rather than autosomal recessive?',
+      opts: ['The trait appears in every single generation','Far more males are affected than females, and affected fathers never pass the trait directly to their sons','Both males and females are equally and randomly affected','Two unaffected parents have an affected child'], ans: 1 },
+    { q: 'A pedigree shows an affected father whose son is also affected. What does father-to-son transmission tell us about the trait?',
+      opts: ['The trait must be X-linked recessive','The trait cannot be X-linked — fathers pass their Y chromosome to sons, so X-linked traits cannot be transmitted father-to-son','The trait must be autosomal recessive','The trait is definitely dominant'], ans: 1 },
+    { q: 'In a pedigree, two unaffected parents produce an affected child. What does this most likely indicate?',
+      opts: ['The trait is dominant and the child has a spontaneous new mutation','The trait is recessive and both parents are heterozygous carriers','The pedigree must contain an error','The trait is X-linked dominant'], ans: 1 },
+    { q: 'An individual is described as heterozygous for a recessive trait. What does this mean for their phenotype?',
+      opts: ['They are fully affected by the trait','They carry one recessive allele but do not express the trait — they are a carrier','They have two copies of the recessive allele and are affected','They are completely unaffected and carry no recessive allele'], ans: 1 },
+    { q: 'What does "autosomal" mean when describing the inheritance of a trait?',
+      opts: ['The gene is located on a sex chromosome (X or Y)','The gene is located on one of the non-sex chromosomes (chromosomes 1–22)','The trait only ever affects one sex','The trait always skips at least one generation'], ans: 1 },
+    { q: 'Which of the following CANNOT be reliably determined from a pedigree diagram alone?',
+      opts: ['Whether a trait is dominant or recessive','The sex of each individual shown','The exact genotype of every individual showing the dominant phenotype — they could be homozygous dominant or heterozygous','Which generation of the family is being studied'], ans: 2 },
+    { q: 'A trait appears in every generation of a pedigree and every affected individual has at least one affected parent. This pattern is most consistent with which inheritance type?',
+      opts: ['Autosomal recessive','X-linked recessive','Autosomal dominant','Mitochondrial inheritance'], ans: 2 },
+    { q: 'In an X-linked recessive condition, why are males affected far more often than females?',
+      opts: ['Males have a stronger inflammatory response to X-linked genes','Males have only one X chromosome, so a single recessive allele on the X is enough to express the trait','The Y chromosome actively switches on X-linked recessive alleles','Females cannot carry X-linked recessive alleles at all'], ans: 1 },
+    { q: 'A female is a confirmed carrier of an X-linked recessive condition. She is unaffected. What best describes her genotype?',
+      opts: ['She is homozygous recessive — she has two copies of the allele on both X chromosomes','She is heterozygous — one X carries the recessive allele and one X carries the normal allele','She has one X and one Y chromosome','She has no copies of the recessive allele whatsoever'], ans: 1 },
+  ],
+  // Monster 2 – Immune Response  (pool of 12, monster has 6 HP)
+  [
+    { q: 'Which cell engulfs pathogens by phagocytosis and then presents antigens on its surface to activate helper T-cells?',
+      opts: ['Plasma B-cell','Macrophage','Memory B-cell','Suppressor T-cell'], ans: 1 },
+    { q: 'What is the primary role of plasma B-cells in the immune response?',
+      opts: ['Engulf and destroy infected cells','Produce and secrete antibodies','Suppress the immune response after infection','Present antigens to T-cells'], ans: 1 },
+    { q: 'Which branch of adaptive immunity involves B-cells producing antibodies that circulate in body fluids?',
+      opts: ['Cell-mediated immunity','Innate immunity','Humoral immunity','Phagocytic immunity'], ans: 2 },
+    { q: 'Which cells directly kill body cells that have been infected by a virus?',
+      opts: ['Helper T-cells','Macrophages','Plasma B-cells','Killer T-cells'], ans: 3 },
+    { q: 'What is the role of helper T-cells in coordinating the immune response?',
+      opts: ['Directly kill infected cells','Produce antibodies','Release cytokines that activate B-cells and killer T-cells','Suppress the immune response'], ans: 2 },
+    { q: 'A person recovers from the flu and is now immune to that strain. This is an example of which type of immunity?',
+      opts: ['Passive immunity','Innate immunity','Active immunity','Cell-mediated immunity'], ans: 2 },
+    { q: 'A newborn receives antibodies through the placenta before birth. This is an example of which type of immunity?',
+      opts: ['Active natural immunity','Cell-mediated immunity','Passive immunity','Humoral immunity'], ans: 2 },
+    { q: 'What is the function of memory B-cells and memory T-cells after an infection is cleared?',
+      opts: ['Continue producing antibodies indefinitely','Suppress future immune responses','Enable a faster, stronger response if the same pathogen is encountered again','Present antigens to macrophages'], ans: 2 },
+    { q: 'Which cells suppress the immune response once an infection has been successfully cleared, preventing tissue damage?',
+      opts: ['Helper T-cells','Killer T-cells','Memory B-cells','Suppressor T-cells'], ans: 3 },
+    { q: 'Cell-mediated immunity — which targets infected body cells and intracellular pathogens — primarily involves which cells?',
+      opts: ['B-cells and plasma cells','T-cells','Macrophages and neutrophils','Antibodies in the bloodstream'], ans: 1 },
+    { q: 'In the correct sequence of the adaptive immune response to a new pathogen, what happens after a macrophage presents an antigen?',
+      opts: ['Memory cells immediately destroy the pathogen','Helper T-cells are activated, which then activate B-cells and killer T-cells','Suppressor T-cells shut down the response','Plasma B-cells produce antibodies before T-cells are involved'], ans: 1 },
+    { q: 'Vaccination stimulates active immunity primarily by producing which long-lived cells that protect against future infection?',
+      opts: ['Macrophages only','Suppressor T-cells','Memory B-cells and memory T-cells','Killer T-cells only'], ans: 2 },
+  ],
+  // Monster 3 – Mitosis & Meiosis  (pool of 13, monster has 7 HP)
+  [
+    { q: 'How many daughter cells does mitosis produce, and what is their chromosome number relative to the parent cell?',
+      opts: ['4 haploid (half the chromosomes)','2 diploid (same number of chromosomes)','4 diploid (same number of chromosomes)','2 haploid (half the chromosomes)'], ans: 1 },
+    { q: 'How many daughter cells does meiosis produce, and what is their ploidy?',
+      opts: ['2 diploid cells','2 haploid cells','4 diploid cells','4 haploid cells'], ans: 3 },
+    { q: 'Which process produces genetically identical daughter cells?',
+      opts: ['Meiosis I','Meiosis II','Mitosis','Crossing over'], ans: 2 },
+    { q: 'In which stage of meiosis does crossing over occur between homologous chromosomes?',
+      opts: ['Metaphase II','Prophase I','Anaphase I','Telophase II'], ans: 1 },
+    { q: 'What occurs during crossing over?',
+      opts: ['Chromosomes line up at the cell\'s equator','Homologous chromosomes exchange segments of genetic material','Sister chromatids are pulled to opposite poles','The cell splits into two'], ans: 1 },
+    { q: 'Why does meiosis produce genetically unique cells while mitosis produces identical ones?',
+      opts: ['Meiosis copies DNA twice before dividing','Crossing over and independent assortment shuffle genetic information during meiosis','Meiosis skips the S phase of interphase','Mitosis only copies half the chromosomes'], ans: 1 },
+    { q: 'During which phase of mitosis or meiosis do chromosomes line up along the middle of the cell?',
+      opts: ['Prophase','Anaphase','Telophase','Metaphase'], ans: 3 },
+    { q: 'What is the key event during anaphase of mitosis?',
+      opts: ['Chromosomes condense and become visible','The nuclear envelope breaks down','Sister chromatids are pulled apart to opposite poles','Cytokinesis produces two new cells'], ans: 2 },
+    { q: 'Independent assortment during Meiosis I refers to which process?',
+      opts: ['Homologous chromosomes randomly exchanging gene segments','The random orientation of homologous pairs at the cell\'s equator, producing different chromosome combinations','The separation of sister chromatids during Anaphase II','The equal division of cytoplasm'], ans: 1 },
+    { q: 'Which statement correctly compares mitosis and meiosis?',
+      opts: ['Both produce haploid daughter cells','Meiosis produces 2 genetically identical cells; mitosis produces 4 unique cells','Mitosis involves two rounds of nuclear division','Mitosis produces 2 genetically identical cells; meiosis produces 4 genetically unique cells'], ans: 3 },
+    { q: 'What is the primary purpose of mitosis in the human body?',
+      opts: ['Production of gametes (sperm and eggs)','Creating genetic variation','Growth, repair, and replacement of body cells','Reducing the chromosome number by half'], ans: 2 },
+    { q: 'Why are crossing over and independent assortment important for a species\' survival?',
+      opts: ['They increase chromosome number in offspring','They create new combinations of alleles, increasing genetic diversity in the population','They ensure offspring are identical to parents','They prevent harmful mutations from passing to offspring'], ans: 1 },
+    { q: 'During Meiosis I, what moves to opposite poles of the cell?',
+      opts: ['Sister chromatids separate and move apart','Individual unpaired chromosomes','Homologous chromosome pairs separate from each other','DNA strands unwind and migrate'], ans: 2 },
+  ],
+  // Monster 4 – CRISPR & Transgenics  (pool of 10, monster has 3 HP — spawns health on defeat)
+  [
+    { q: 'What is a transgenic organism?',
+      opts: ['An organism that has had one of its own genes switched off','An organism that contains functional DNA inserted from a different species','An organism produced purely by selective breeding','An organism that reproduces without a partner'], ans: 1 },
+    { q: 'Which of the following is a real-world example of a transgenic organism?',
+      opts: ['A mule produced by crossing a horse and a donkey','A plant selectively bred for larger fruit over many generations','Bacteria engineered to produce human insulin','A human born with a naturally occurring genetic mutation'], ans: 2 },
+    { q: 'What is the basic process used to create a transgenic organism?',
+      opts: ['Using CRISPR to delete genes within the same organism','A gene is isolated from one organism and inserted into the genome of a different organism using a vector','Exposing cells to radiation to produce random beneficial mutations','Crossing two organisms of the same species to select desirable traits'], ans: 1 },
+    { q: 'In CRISPR gene editing, what is the role of the guide RNA?',
+      opts: ['It cuts the DNA strand at the target location','It joins pieces of DNA back together after editing','It directs the Cas9 enzyme to the correct target sequence on the DNA','It carries foreign DNA from one organism into another'], ans: 2 },
+    { q: 'What is the key difference between CRISPR and transgenics?',
+      opts: ['Transgenics works only in plants; CRISPR works only in animals','CRISPR edits genes within an organism\'s own genome; transgenics inserts foreign DNA from another species','CRISPR always adds new genes; transgenics only removes them','Transgenics is more precise and targeted than CRISPR'], ans: 1 },
+    { q: 'Which of the following is a similarity between CRISPR and transgenic technology?',
+      opts: ['Both always introduce DNA from a different species','Both use guide RNA to locate target sequences','Both involve deliberately modifying an organism\'s genetic material','Both rely on bacterial plasmids as the only delivery method'], ans: 2 },
+    { q: 'Which of the following is a potential application of CRISPR gene editing?',
+      opts: ['Producing a new species by combining two organisms','Correcting a faulty gene responsible for a genetic disease','Grafting tissue from one organism onto another','Creating hybrid offspring through cross-breeding'], ans: 1 },
+    { q: 'What is recombinant DNA?',
+      opts: ['DNA that has been damaged by UV radiation','DNA produced naturally during meiosis through crossing over','DNA that combines genetic sequences from two or more different sources','DNA extracted from an organism and stored without any modification'], ans: 2 },
+    { q: 'In transgenic technology, what is the purpose of a vector such as a bacterial plasmid?',
+      opts: ['To cut the host DNA at a specific target location','To carry and deliver the foreign gene into the host cell\'s genome','To guide the Cas9 enzyme to the correct DNA sequence','To produce the protein directly from the inserted gene'], ans: 1 },
+    { q: 'Which statement best describes an advantage CRISPR has over traditional transgenic methods?',
+      opts: ['CRISPR can only be used in bacteria, making it simpler','CRISPR does not alter DNA at all — it only changes protein levels','CRISPR is more precise, targeting a specific gene sequence without necessarily introducing foreign species DNA','Traditional transgenics is faster and cheaper than CRISPR in all applications'], ans: 2 },
+  ],
+  // Monster 5 – General Genetics  (pool of 15, monster has 10 HP — hard route)
+  [
+    { q: 'What is a SNP (Single Nucleotide Polymorphism)?',
+      opts: ['A large-scale rearrangement of whole chromosomes','A variation in a single base pair at a specific position in the genome','A repeated DNA sequence used in fingerprinting','The insertion of an entire extra chromosome'], ans: 1 },
+    { q: 'Which type of mutation involves a change to a single nucleotide in the DNA sequence?',
+      opts: ['Chromosomal mutation','Translocation','Point mutation','Polyploidy'], ans: 2 },
+    { q: 'Which of the following is an example of a chromosomal mutation rather than a point mutation?',
+      opts: ['A single base substitution changing one amino acid','A deletion of one nucleotide causing a frameshift','An entire section of a chromosome being transferred to a non-homologous chromosome','A SNP changing one base pair'], ans: 2 },
+    { q: 'What are STRs (Short Tandem Repeats) and why are they useful in forensics?',
+      opts: ['Long gene sequences that code for structural proteins; used in drug design','Short DNA sequences that repeat multiple times; the number of repeats varies between individuals, making them useful for identification','Single base-pair changes that indicate disease risk','Non-coding RNA sequences involved in translation'], ans: 1 },
+    { q: 'In gel electrophoresis, what determines how far a DNA fragment travels through the gel?',
+      opts: ['Its nucleotide sequence','Its colour when stained with dye','Its size — smaller fragments travel further','Its charge — positively charged fragments travel further'], ans: 2 },
+    { q: 'What is the key difference between DNA sequencing and DNA fingerprinting?',
+      opts: ['Sequencing identifies individuals; fingerprinting reads the order of bases','Sequencing determines the exact order of nucleotide bases; fingerprinting compares STR patterns to identify individuals','Both are identical methods used in different contexts','Fingerprinting reads the entire genome; sequencing only analyses STRs'], ans: 1 },
+    { q: 'During transcription, what is produced and where does it occur?',
+      opts: ['A polypeptide chain is assembled at the ribosome','A strand of tRNA is produced in the cytoplasm','A strand of mRNA complementary to the DNA template is produced in the nucleus','A copy of the DNA double helix is made in the mitochondria'], ans: 2 },
+    { q: 'Where does translation occur, and what is produced?',
+      opts: ['In the nucleus, producing a copy of the DNA','At ribosomes in the cytoplasm, producing a polypeptide (protein)','In the mitochondria, producing ATP','On the nuclear membrane, producing tRNA'], ans: 1 },
+    { q: 'What is the role of tRNA during translation?',
+      opts: ['It carries the mRNA from the nucleus to the ribosome','It unwinds the DNA double helix so it can be read','It carries specific amino acids to the ribosome and matches them to the correct mRNA codon via its anticodon','It bonds amino acids together to form the polypeptide chain'], ans: 2 },
+    { q: 'What is the difference between a gene and an allele?',
+      opts: ['A gene is only found in somatic cells; an allele is only found in gametes','A gene is a specific segment of DNA coding for a particular trait; an allele is a variant form of that gene','Alleles are found only on sex chromosomes; genes are found only on autosomes','Genes code for RNA; alleles code directly for proteins'], ans: 1 },
+    { q: 'If an allele is dominant, what does this mean for its expression?',
+      opts: ['It is always harmful to the organism','It is expressed in the phenotype whenever at least one copy is present, including in heterozygous individuals','It is only expressed when two copies (homozygous) are inherited','It is more common in the population than recessive alleles'], ans: 1 },
+    { q: 'A person is heterozygous (Tt) for a trait where T is dominant. What will their phenotype show?',
+      opts: ['A blend of both the dominant and recessive traits','The recessive trait, because both alleles contribute equally','The dominant trait, because the dominant allele masks the recessive','Neither trait — heterozygotes always appear unaffected'], ans: 2 },
+    { q: 'The insertion or deletion of one or two nucleotides causes what type of mutation, and why is it significant?',
+      opts: ['A chromosomal translocation — it moves genes to a new chromosome','A silent substitution — it changes the codon but not the amino acid','A frameshift mutation — it shifts the reading frame, altering every codon downstream','An SNP — it changes a single base without affecting the reading frame'], ans: 2 },
+    { q: 'Why do different people produce different STR profiles in DNA fingerprinting?',
+      opts: ['Different people have different numbers of chromosomes','The number of times a short sequence repeats at specific loci varies between individuals','STRs are only present in people with certain genetic diseases','Each person\'s STRs are located on entirely different chromosomes'], ans: 1 },
+    { q: 'Which of the following correctly describes the central dogma — the flow of genetic information in polypeptide synthesis?',
+      opts: ['mRNA → DNA → tRNA → Protein','DNA → mRNA (via transcription) → Protein (via translation)','DNA → Protein → mRNA → Amino acids','tRNA → mRNA → DNA → Polypeptide'], ans: 1 },
+  ],
+];
+
+// All questions pool for chest challenge
+function allQuestions() {
+  return Q_SETS.flat();
+}
+
+// ── Monster definitions ──────────────────────────────────────────
+// All 6 guard a corridor entrance; defeating one teleports the chest.
+function buildMonsters() {
+  return [
+    { id:0, x:3,  y:4,  name:'Nucleus Beast',  topic:'Pregnancy Hormones',  maxHp:8,  hp:8,  defeated:false, qset:0 },
+    { id:1, x:10, y:4,  name:'Protein Wraith', topic:'Pedigrees',            maxHp:5,  hp:5,  defeated:false, qset:1 },
+    { id:2, x:17, y:4,  name:'DNA Serpent',    topic:'Immune Response',      maxHp:6,  hp:6,  defeated:false, qset:2 },
+    { id:3, x:3,  y:10, name:'Membrane Golem', topic:'Mitosis & Meiosis',    maxHp:7,  hp:7,  defeated:false, qset:3 },
+    { id:4, x:10, y:10, name:'Enzyme Specter', topic:'CRISPR & Transgenics', maxHp:3,  hp:3,  defeated:false, qset:4 },
+    { id:5, x:17, y:10, name:'Mitosis Titan',  topic:'General Genetics',     maxHp:10, hp:10, defeated:false, qset:5 },
+  ];
+}
+
+// ── Health pickup positions — 2 hearts per chamber ───────────────
+function buildHealthPickups() {
+  return [
+    { x:2,  y:2,  active:true }, { x:4,  y:2,  active:true }, // CH0
+    { x:8,  y:2,  active:true }, { x:11, y:2,  active:true }, // CH1
+    { x:15, y:2,  active:true }, { x:17, y:2,  active:true }, // CH2
+    { x:2,  y:12, active:true }, { x:4,  y:12, active:true }, // CH3
+    { x:8,  y:12, active:true }, { x:11, y:12, active:true }, // CH4
+    { x:15, y:12, active:true }, { x:17, y:12, active:true }, // CH5
+  ];
+}
+
+// ── Player ───────────────────────────────────────────────────────
+let player, monsters, healthPickups, score, chestProgress, activeMonster, battleQ, battleIdx,
+    battleFeedback, battleFeedbackTimer, chestFeedback, chestFeedbackTimer, defeatedList,
+    flashTimer, flashColor;
+
+function initGame() {
+  player = { x:9, y:7, hp:10, maxHp:10 };
+  chestChamberIdx = Math.floor(Math.random() * CHAMBERS.length);
+  chestPos = { x: CHAMBERS[chestChamberIdx].x, y: CHAMBERS[chestChamberIdx].y };
+  monsters      = buildMonsters();
+  healthPickups = buildHealthPickups();
+  score         = 0;
+  chestProgress = 0;
+  activeMonster = null;
+  battleQ       = null;
+  battleIdx     = 0;
+  battleFeedback      = '';
+  battleFeedbackTimer = 0;
+  chestFeedback       = '';
+  chestFeedbackTimer  = 0;
+  defeatedList  = [];
+  flashTimer    = 0;
+  flashColor    = '';
+  gs = S.TITLE;
+}
+
+// ── Pixel art sprites (8×8, scale 4 = 32px in dungeon, scale 8 in battle) ──
+// palette index 0 = transparent
+
+const SPR = {};
+
+// Player — silver knight
+SPR.player = {
+  px: [
+    [0,0,3,3,3,3,0,0],
+    [0,3,3,4,4,3,3,0],
+    [0,3,1,3,3,1,3,0],
+    [0,3,3,3,3,3,3,0],
+    [0,2,2,2,2,2,2,0],
+    [2,2,2,4,4,2,2,2],
+    [0,2,5,2,2,5,2,0],
+    [0,5,5,0,0,5,5,0],
+  ],
+  pal: ['','#cc2233','#4466dd','#888899','#aabbcc','#332211'],
+};
+
+// Monsters — Atari 2600 style (2–3 colours)
+SPR.m0 = { // Nucleus Beast — blue blob
+  px: [
+    [0,0,1,1,1,1,0,0],
+    [0,1,1,1,1,1,1,0],
+    [1,1,2,1,1,2,1,1],
+    [1,1,1,1,1,1,1,1],
+    [1,1,3,3,3,3,1,1],
+    [0,1,1,1,1,1,1,0],
+    [0,0,1,1,1,1,0,0],
+    [0,0,2,0,0,2,0,0],
+  ],
+  pal: ['','#3366ff','#ffffff','#112299'],
+};
+
+SPR.m1 = { // Protein Wraith — ghostly green
+  px: [
+    [0,0,0,1,1,0,0,0],
+    [0,0,1,1,1,1,0,0],
+    [0,1,2,1,1,2,1,0],
+    [0,1,1,1,1,1,1,0],
+    [0,1,3,1,1,3,1,0],
+    [1,1,1,1,1,1,1,1],
+    [1,0,1,0,0,1,0,1],
+    [0,0,1,0,0,1,0,0],
+  ],
+  pal: ['','#33cc66','#ffffff','#116633'],
+};
+
+SPR.m2 = { // DNA Serpent — red coils
+  px: [
+    [0,1,0,0,0,0,1,0],
+    [1,1,1,0,0,1,1,1],
+    [0,1,2,1,1,2,1,0],
+    [0,0,1,1,1,1,0,0],
+    [0,0,1,3,3,1,0,0],
+    [0,1,1,0,0,1,1,0],
+    [1,1,0,0,0,0,1,1],
+    [1,0,0,0,0,0,0,1],
+  ],
+  pal: ['','#cc3333','#ffaaaa','#881111'],
+};
+
+SPR.m3 = { // Membrane Golem — rocky brown
+  px: [
+    [0,1,1,1,1,1,1,0],
+    [1,1,1,1,1,1,1,1],
+    [1,2,1,2,2,1,2,1],
+    [1,1,1,1,1,1,1,1],
+    [1,1,3,1,1,3,1,1],
+    [1,1,1,1,1,1,1,1],
+    [0,1,1,0,0,1,1,0],
+    [0,3,3,0,0,3,3,0],
+  ],
+  pal: ['','#996633','#ffcc88','#554422'],
+};
+
+SPR.m4 = { // Enzyme Specter — purple wisps
+  px: [
+    [0,0,0,1,1,0,0,0],
+    [0,0,1,1,1,1,0,0],
+    [0,1,1,2,2,1,1,0],
+    [0,1,1,1,1,1,1,0],
+    [0,1,3,1,1,3,1,0],
+    [0,0,1,1,1,1,0,0],
+    [0,1,0,1,1,0,1,0],
+    [1,0,0,0,0,0,0,1],
+  ],
+  pal: ['','#9933cc','#cc88ff','#551188'],
+};
+
+SPR.m5 = { // Mitosis Titan — orange hulk
+  px: [
+    [0,1,1,1,1,1,1,0],
+    [1,1,2,1,1,2,1,1],
+    [1,2,1,2,2,1,2,1],
+    [1,1,1,1,1,1,1,1],
+    [1,1,3,3,3,3,1,1],
+    [1,1,1,1,1,1,1,1],
+    [1,1,2,1,1,2,1,1],
+    [1,3,3,0,0,3,3,1],
+  ],
+  pal: ['','#ff8800','#ffcc44','#cc5500'],
+};
+
+const MSPRITES = [SPR.m0, SPR.m1, SPR.m2, SPR.m3, SPR.m4, SPR.m5];
+
+// ── Draw utility ─────────────────────────────────────────────────
+function drawSprite(spr, dx, dy, scale) {
+  const px = spr.px, pal = spr.pal;
+  for (let r = 0; r < px.length; r++) {
+    for (let c = 0; c < px[r].length; c++) {
+      const ci = px[r][c];
+      if (ci === 0) continue;
+      X.fillStyle = pal[ci];
+      X.fillRect(dx + c * scale, dy + r * scale, scale, scale);
+    }
+  }
+}
+
+// ── Tile helpers ─────────────────────────────────────────────────
+function tile(tx, ty) {
+  if (ty < 0 || ty >= GH || tx < 0 || tx >= GW) return 'W';
+  return MAPFIX[ty][tx];
+}
+
+function isWall(tx, ty) { return tile(tx, ty) === 'W'; }
+function isChest(tx, ty) { return tx === chestPos.x && ty === chestPos.y; }
+
+function isBlockedByMonster(tx, ty) {
+  return monsters.some(m => !m.defeated && m.x === tx && m.y === ty);
+}
+
+// ── Drawing: Dungeon ──────────────────────────────────────────────
+function drawDungeon() {
+  // Background
+  X.fillStyle = '#050310';
+  X.fillRect(0, 0, 800, 600);
+
+  // Tiles
+  for (let r = 0; r < GH; r++) {
+    for (let c = 0; c < GW; c++) {
+      const ch = MAPFIX[r][c];
+      const px = c * T, py = r * T;
+      if (ch === 'W') {
+        // Wall — 3D block effect
+        X.fillStyle = '#2a1050';
+        X.fillRect(px, py, T, T);
+        X.fillStyle = '#4a2080';
+        X.fillRect(px, py, T, 6);        // top highlight
+        X.fillStyle = '#1a0830';
+        X.fillRect(px, py + T - 6, T, 6); // bottom shadow
+        X.fillStyle = '#3a1868';
+        X.fillRect(px + 2, py + 2, T - 4, T - 4);
+      } else {
+        // Floor — subtle checkerboard
+        X.fillStyle = (r + c) % 2 === 0 ? '#0d0820' : '#100a25';
+        X.fillRect(px, py, T, T);
+        // Floor border (very subtle)
+        X.strokeStyle = '#1a1035';
+        X.lineWidth = 1;
+        X.strokeRect(px + 0.5, py + 0.5, T - 1, T - 1);
+      }
+    }
+  }
+
+  // Health pickups
+  healthPickups.forEach(hp => {
+    if (!hp.active) return;
+    const px = hp.x * T + 8, py = hp.y * T + 8;
+    // Heart shape (pixel art)
+    X.fillStyle = '#ff2244';
+    X.fillRect(px+4, py,   8, 4);
+    X.fillRect(px+16,py,   8, 4);
+    X.fillRect(px,   py+4, 24, 8);
+    X.fillRect(px+4, py+12, 16, 8);
+    X.fillRect(px+8, py+20, 8,  4);
+  });
+
+  // Chest
+  {
+    const cx = chestPos.x * T + 4, cy = chestPos.y * T + 4;
+    X.fillStyle = '#8B4513';
+    X.fillRect(cx, cy, T - 8, T - 8);
+    X.fillStyle = '#ffd700';
+    X.fillRect(cx + 2, cy + 2, T - 12, (T - 8) / 2 - 2);
+    X.fillStyle = '#ffec6e';
+    X.fillRect(cx + (T-12)/2 - 3, cy + (T-8)/2 - 4, 10, 8);
+    // Sparkle
+    const t = Date.now() / 400;
+    X.fillStyle = `rgba(255,220,50,${0.5 + 0.5 * Math.sin(t)})`;
+    X.fillRect(cx + 10, cy - 6, 4, 4);
+    X.fillRect(cx + T - 20, cy - 4, 3, 3);
+  }
+
+  // Monsters (small dungeon view)
+  monsters.forEach((m, i) => {
+    if (m.defeated) return;
+    const dx = m.x * T + 4, dy = m.y * T + 4;
+    drawSprite(MSPRITES[i], dx, dy, 4);
+  });
+
+  // Player
+  {
+    const dx = player.x * T + 4, dy = player.y * T + 4;
+    drawSprite(SPR.player, dx, dy, 4);
+  }
+
+  // HUD — top bar
+  X.fillStyle = 'rgba(0,0,0,0.7)';
+  X.fillRect(0, 0, 800, 30);
+  X.fillStyle = '#e8e0ff';
+  X.font = '14px "Courier New"';
+  X.fillText('HP:', 10, 20);
+  drawBar(40, 8, 120, 14, player.hp, player.maxHp, '#ff2244', '#550011');
+  X.fillStyle = '#ffd700';
+  X.fillText(`Score: ${score}`, 200, 20);
+  X.fillStyle = '#88aaff';
+  X.fillText('Arrows=Move  Space=Battle  Esc=Cancel', 350, 20);
+
+  // Screen flash feedback
+  if (flashTimer > 0) {
+    X.fillStyle = flashColor;
+    X.fillRect(0, 0, 800, 600);
+    flashTimer--;
+  }
+}
+
+// ── Drawing: Monster encounter prompt ────────────────────────────
+function drawPrompt() {
+  drawDungeon();
+  const m = activeMonster;
+  if (!m) return;
+
+  // Text bubble
+  const bx = 140, by = 160, bw = 520, bh = 200;
+  X.fillStyle = '#0a0518';
+  X.fillRect(bx, by, bw, bh);
+  X.strokeStyle = '#9966ff';
+  X.lineWidth = 3;
+  X.strokeRect(bx, by, bw, bh);
+  // Pointer triangle
+  X.fillStyle = '#0a0518';
+  X.beginPath();
+  X.moveTo(bx + 60, by + bh);
+  X.lineTo(bx + 80, by + bh + 30);
+  X.lineTo(bx + 100, by + bh);
+  X.fill();
+  X.strokeStyle = '#9966ff';
+  X.lineWidth = 3;
+  X.beginPath();
+  X.moveTo(bx + 60, by + bh);
+  X.lineTo(bx + 80, by + bh + 30);
+  X.lineTo(bx + 100, by + bh);
+  X.stroke();
+
+  X.fillStyle = '#ff8800';
+  X.font = 'bold 18px "Courier New"';
+  X.fillText(`⚔ ${m.name}`, bx + 20, by + 40);
+
+  X.fillStyle = '#aabbff';
+  X.font = '15px "Courier New"';
+  X.fillText(`Topic: ${m.topic}`, bx + 20, by + 70);
+
+  X.fillStyle = '#e8e0ff';
+  X.fillText(`Monster HP: ${m.hp} / ${m.maxHp}  (answer ${m.hp} questions correctly to defeat!)`, bx + 20, by + 100);
+
+  X.fillStyle = '#ffcc00';
+  X.font = 'bold 16px "Courier New"';
+  const blink = Math.floor(Date.now() / 500) % 2;
+  if (blink) X.fillText('[ SPACE ] — Enter Battle        [ ESC ] — Back away', bx + 20, by + 150);
+
+  // Small monster preview
+  drawSprite(MSPRITES[m.id], bx + bw - 60, by + 20, 5);
+}
+
+// ── Drawing: Battle screen ────────────────────────────────────────
+function drawBattle() {
+  const m = activeMonster;
+
+  // Background
+  X.fillStyle = '#08041a';
+  X.fillRect(0, 0, 800, 600);
+  // Scan-line effect
+  for (let y = 0; y < 600; y += 4) {
+    X.fillStyle = 'rgba(0,0,0,0.25)';
+    X.fillRect(0, y, 800, 2);
+  }
+
+  // Monster area (top half)
+  X.fillStyle = '#0d0828';
+  X.fillRect(0, 0, 800, 300);
+  X.strokeStyle = '#332255';
+  X.lineWidth = 2;
+  X.strokeRect(0, 0, 800, 300);
+
+  // Monster sprite (large)
+  const sprScale = 24;
+  const sprW = 8 * sprScale, sprH = 8 * sprScale;
+  const sprX = 500, sprY = 20;
+  drawSprite(MSPRITES[m.id], sprX, sprY, sprScale);
+
+  // Monster name + HP bar
+  X.fillStyle = '#ff8800';
+  X.font = 'bold 22px "Courier New"';
+  X.fillText(m.name, 40, 50);
+  X.fillStyle = '#aaaacc';
+  X.font = '15px "Courier New"';
+  X.fillText(`${m.topic}`, 40, 75);
+  drawBar(40, 90, 300, 22, m.hp, m.maxHp, '#ff2244', '#440011');
+  X.fillStyle = '#e8e0ff';
+  X.font = '14px "Courier New"';
+  X.fillText(`${m.hp} / ${m.maxHp}`, 350, 108);
+
+  // Player HP bar (top-right area of monster section)
+  X.fillStyle = '#33ff77';
+  X.font = 'bold 16px "Courier New"';
+  X.fillText('YOUR HP', 40, 150);
+  drawBar(40, 158, 300, 22, player.hp, player.maxHp, '#33ff77', '#003311');
+  X.fillStyle = '#e8e0ff';
+  X.font = '14px "Courier New"';
+  X.fillText(`${player.hp} / ${player.maxHp}`, 350, 177);
+
+  X.fillStyle = '#ffd700';
+  X.font = '14px "Courier New"';
+  X.fillText(`Score: ${score}`, 40, 215);
+
+  // Battle feedback message
+  if (battleFeedback) {
+    const isCorrect = battleFeedback.startsWith('✓');
+    X.fillStyle = isCorrect ? '#33ff77' : '#ff3355';
+    X.font = 'bold 20px "Courier New"';
+    X.fillText(battleFeedback, 40, 260);
+  }
+
+  // Question area (bottom half)
+  X.fillStyle = '#0a0520';
+  X.fillRect(0, 305, 800, 295);
+  X.strokeStyle = '#6644aa';
+  X.lineWidth = 2;
+  X.strokeRect(5, 308, 790, 285);
+
+  if (battleQ) {
+    // Question text (word-wrap)
+    X.fillStyle = '#e8e0ff';
+    X.font = '16px "Courier New"';
+    const qLines = wrapText(battleQ.q, 720);
+    qLines.forEach((line, i) => X.fillText(line, 40, 345 + i * 24));
+
+    const optY = 345 + qLines.length * 24 + 20;
+    const labels = ['1','2','3','4'];
+    battleQ.opts.forEach((opt, i) => {
+      const selected = battleIdx === i;
+      X.fillStyle = selected ? '#332299' : 'transparent';
+      if (selected) X.fillRect(30, optY + i * 44 - 24, 740, 38);
+      X.strokeStyle = selected ? '#9966ff' : '#443366';
+      X.lineWidth = 1;
+      X.strokeRect(30, optY + i * 44 - 24, 740, 38);
+      X.fillStyle = selected ? '#ffff00' : '#aaaacc';
+      X.font = `${selected ? 'bold ' : ''}15px "Courier New"`;
+      X.fillText(`[${labels[i]}]  ${opt}`, 48, optY + i * 44);
+    });
+
+    X.fillStyle = '#666688';
+    X.font = '13px "Courier New"';
+    X.fillText('↑↓ navigate   1-4 or Enter to answer', 40, 585);
+  }
+}
+
+// ── Drawing: Chest challenge ─────────────────────────────────────
+function drawChest() {
+  X.fillStyle = '#0a0510';
+  X.fillRect(0, 0, 800, 600);
+
+  // Golden border
+  X.strokeStyle = '#ffd700';
+  X.lineWidth = 4;
+  X.strokeRect(10, 10, 780, 580);
+  X.strokeStyle = '#ffaa00';
+  X.lineWidth = 2;
+  X.strokeRect(18, 18, 764, 564);
+
+  // Chest icon row
+  X.fillStyle = '#ffd700';
+  X.font = 'bold 26px "Courier New"';
+  X.textAlign = 'center';
+  X.fillText('★  GOLDEN CHEST  ★', 400, 60);
+  X.textAlign = 'left';
+
+  X.fillStyle = '#e8e0ff';
+  X.font = '16px "Courier New"';
+  X.textAlign = 'center';
+  X.fillText('Answer 5 questions in a row to escape the dungeon!', 400, 95);
+  X.textAlign = 'left';
+
+  // Progress pips
+  const pipW = 100, pipH = 30, pipGap = 20;
+  const totalW = 5 * pipW + 4 * pipGap;
+  const startX = (800 - totalW) / 2;
+  for (let i = 0; i < 5; i++) {
+    const px = startX + i * (pipW + pipGap), py = 115;
+    X.fillStyle = i < chestProgress ? '#33cc55' : '#221133';
+    X.fillRect(px, py, pipW, pipH);
+    X.strokeStyle = i < chestProgress ? '#66ff88' : '#664488';
+    X.lineWidth = 2;
+    X.strokeRect(px, py, pipW, pipH);
+    if (i < chestProgress) {
+      X.fillStyle = '#ffffff';
+      X.font = 'bold 18px "Courier New"';
+      X.textAlign = 'center';
+      X.fillText('✓', px + pipW / 2, py + 21);
+      X.textAlign = 'left';
+    }
+  }
+
+  if (chestFeedback) {
+    const isCorrect = chestFeedback.startsWith('✓');
+    X.fillStyle = isCorrect ? '#33ff77' : '#ff3355';
+    X.font = 'bold 18px "Courier New"';
+    X.textAlign = 'center';
+    X.fillText(chestFeedback, 400, 170);
+    X.textAlign = 'left';
+  }
+
+  // Question
+  if (battleQ) {
+    X.fillStyle = '#ffffcc';
+    X.font = '15px "Courier New"';
+    const qLines = wrapText(battleQ.q, 680);
+    qLines.forEach((line, i) => {
+      X.textAlign = 'center';
+      X.fillText(line, 400, 210 + i * 24);
+      X.textAlign = 'left';
+    });
+
+    const optY = 210 + qLines.length * 24 + 20;
+    const labels = ['1','2','3','4'];
+    battleQ.opts.forEach((opt, i) => {
+      const sel = battleIdx === i;
+      X.fillStyle = sel ? '#332288' : 'transparent';
+      if (sel) X.fillRect(60, optY + i * 48 - 26, 680, 42);
+      X.strokeStyle = sel ? '#ffcc00' : '#554477';
+      X.lineWidth = 1;
+      X.strokeRect(60, optY + i * 48 - 26, 680, 42);
+      X.fillStyle = sel ? '#ffff88' : '#ccbbee';
+      X.font = `${sel ? 'bold ' : ''}15px "Courier New"`;
+      X.fillText(`[${labels[i]}]  ${opt}`, 80, optY + i * 48);
+    });
+
+    X.fillStyle = '#666688';
+    X.font = '13px "Courier New"';
+    X.textAlign = 'center';
+    X.fillText('↑↓ navigate   1-4 or Enter to answer', 400, 585);
+    X.textAlign = 'left';
+  }
+}
+
+// ── Drawing: Title screen ─────────────────────────────────────────
+function drawTitle() {
+  X.fillStyle = '#050310';
+  X.fillRect(0, 0, 800, 600);
+
+  // Stars
+  for (let i = 0; i < 80; i++) {
+    const sx = (i * 97 + 13) % 800;
+    const sy = (i * 137 + 47) % 600;
+    const bri = Math.sin(Date.now() / 500 + i) * 0.5 + 0.5;
+    X.fillStyle = `rgba(180,180,255,${bri * 0.8})`;
+    X.fillRect(sx, sy, 2, 2);
+  }
+
+  X.textAlign = 'center';
+  X.fillStyle = '#6644aa';
+  X.font = 'bold 46px "Courier New"';
+  X.fillText('HSC BIOLOGY', 400, 160);
+  X.fillStyle = '#9966ff';
+  X.font = 'bold 50px "Courier New"';
+  X.fillText('DUNGEON', 400, 220);
+
+  X.fillStyle = '#aaaacc';
+  X.font = '16px "Courier New"';
+  X.fillText('Year 12 Revision — Defeat the monsters, open the chest!', 400, 280);
+
+  // Sample monster sprites on title
+  const demos = [0,1,2,3,4,5];
+  demos.forEach((mi, i) => {
+    const dx = 80 + i * 110, dy = 320;
+    drawSprite(MSPRITES[mi], dx, dy, 6);
+    X.fillStyle = '#554477';
+    X.font = '11px "Courier New"';
+    X.fillText(monsters[mi].topic, dx - 10, dy + 60);
+  });
+
+  const blink = Math.floor(Date.now() / 600) % 2;
+  if (blink) {
+    X.fillStyle = '#ffcc00';
+    X.font = 'bold 20px "Courier New"';
+    X.fillText('PRESS SPACE OR ENTER TO BEGIN', 400, 540);
+  }
+  X.textAlign = 'left';
+}
+
+// ── Drawing: Win screen ───────────────────────────────────────────
+function drawWin() {
+  X.fillStyle = '#020815';
+  X.fillRect(0, 0, 800, 600);
+  for (let i = 0; i < 40; i++) {
+    const t = Date.now() / 1000 + i;
+    const sx = 400 + Math.cos(t * 0.7 + i) * 350;
+    const sy = 300 + Math.sin(t * 0.5 + i) * 260;
+    X.fillStyle = `hsl(${(i * 30 + Date.now()/20) % 360},100%,70%)`;
+    X.fillRect(sx, sy, 4, 4);
+  }
+  X.textAlign = 'center';
+  X.fillStyle = '#ffd700';
+  X.font = 'bold 52px "Courier New"';
+  X.fillText('ESCAPED!', 400, 200);
+  X.fillStyle = '#e8e0ff';
+  X.font = '24px "Courier New"';
+  X.fillText('You defeated the dungeon!', 400, 265);
+  X.fillStyle = '#ffcc00';
+  X.font = 'bold 36px "Courier New"';
+  X.fillText(`FINAL SCORE: ${score}`, 400, 340);
+  X.fillStyle = '#aaaacc';
+  X.font = '16px "Courier New"';
+  X.fillText('Share your score with the class!', 400, 390);
+  const blink = Math.floor(Date.now() / 600) % 2;
+  if (blink) {
+    X.fillStyle = '#88aaff';
+    X.font = '18px "Courier New"';
+    X.fillText('Press SPACE to play again', 400, 530);
+  }
+  X.textAlign = 'left';
+}
+
+// ── Drawing: Game over ────────────────────────────────────────────
+function drawOver() {
+  X.fillStyle = '#100005';
+  X.fillRect(0, 0, 800, 600);
+  X.textAlign = 'center';
+  X.fillStyle = '#ff2244';
+  X.font = 'bold 60px "Courier New"';
+  X.fillText('GAME OVER', 400, 230);
+  X.fillStyle = '#e8e0ff';
+  X.font = '20px "Courier New"';
+  X.fillText('The dungeon claimed your soul...', 400, 300);
+  X.fillStyle = '#ffd700';
+  X.font = 'bold 28px "Courier New"';
+  X.fillText(`Score: ${score}`, 400, 360);
+  const blink = Math.floor(Date.now() / 600) % 2;
+  if (blink) {
+    X.fillStyle = '#88aaff';
+    X.font = '18px "Courier New"';
+    X.fillText('Press SPACE to try again', 400, 450);
+  }
+  X.textAlign = 'left';
+}
+
+// ── Helpers ───────────────────────────────────────────────────────
+function drawBar(x, y, w, h, val, max, col, bg) {
+  X.fillStyle = bg;
+  X.fillRect(x, y, w, h);
+  X.fillStyle = col;
+  X.fillRect(x, y, Math.round(w * (val / max)), h);
+  X.strokeStyle = '#ffffff44';
+  X.lineWidth = 1;
+  X.strokeRect(x, y, w, h);
+}
+
+function wrapText(text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+  X.font = '16px "Courier New"';
+  words.forEach(w => {
+    const test = line ? line + ' ' + w : w;
+    if (X.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = w;
+    } else {
+      line = test;
+    }
+  });
+  if (line) lines.push(line);
+  return lines;
+}
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Remaining questions for current monster battle (shuffled pool)
+let battlePool = [];
+let currentQ   = null;
+
+function pickNextBattleQuestion() {
+  if (!battlePool.length) {
+    battlePool = shuffle(Q_SETS[activeMonster.qset]);
+  }
+  currentQ = battlePool.pop();
+  battleQ  = currentQ;
+  battleIdx = 0;
+}
+
+let chestPool = [];
+function pickNextChestQuestion() {
+  if (!chestPool.length) chestPool = shuffle(allQuestions());
+  currentQ = chestPool.pop();
+  battleQ  = currentQ;
+  battleIdx = 0;
+}
+
+// ── Game logic ────────────────────────────────────────────────────
+function startGame() {
+  stopBGM();
+  initGame();
+  gs = S.DUNGEON;
+  startBGM();
+}
+
+function adjacentMonster() {
+  const dirs = [[0,-1],[0,1],[-1,0],[1,0]];
+  for (const [dx, dy] of dirs) {
+    const nx = player.x + dx, ny = player.y + dy;
+    const m = monsters.find(m => !m.defeated && m.x === nx && m.y === ny);
+    if (m) return m;
+  }
+  return null;
+}
+
+function tryMove(dx, dy) {
+  const nx = player.x + dx, ny = player.y + dy;
+  if (isWall(nx, ny)) return;
+  if (isBlockedByMonster(nx, ny)) {
+    activeMonster = monsters.find(m => !m.defeated && m.x === nx && m.y === ny);
+    gs = S.PROMPT;
+    return;
+  }
+  player.x = nx;
+  player.y = ny;
+  sfxMove();
+
+  // Chest
+  if (isChest(nx, ny)) {
+    startChestChallenge();
+    return;
+  }
+
+  // Health pickups
+  healthPickups.forEach(hp => {
+    if (hp.active && hp.x === nx && hp.y === ny) {
+      hp.active = false;
+      const gained = Math.min(3, player.maxHp - player.hp);
+      player.hp += gained;
+      flashColor = 'rgba(50,255,100,0.25)';
+      flashTimer = 8;
+    }
+  });
+}
+
+// ── Battle ────────────────────────────────────────────────────────
+function startBattle() {
+  battlePool = shuffle(Q_SETS[activeMonster.qset]);
+  pickNextBattleQuestion();
+  battleFeedback = '';
+  battleFeedbackTimer = 0;
+  gs = S.BATTLE;
+}
+
+function submitBattleAnswer(idx) {
+  if (battleFeedbackTimer > 0) return;
+  const correct = idx === currentQ.ans;
+  if (correct) {
+    score += 10;
+    activeMonster.hp--;
+    battleFeedback = '✓ Correct! Monster takes damage!';
+    flashColor = 'rgba(50,255,100,0.2)';
+    sfxCorrect();
+  } else {
+    player.hp--;
+    battleFeedback = `✗ Wrong! The answer was: ${currentQ.opts[currentQ.ans]}`;
+    flashColor = 'rgba(255,50,50,0.2)';
+    sfxWrong();
+  }
+  flashTimer = 6;
+  battleFeedbackTimer = 90; // ~1.5 sec at 60fps
+
+  if (activeMonster.hp <= 0) {
+    setTimeout(onMonsterDefeated, 1500);
+  } else if (player.hp <= 0) {
+    setTimeout(onPlayerDied, 1500);
+  } else {
+    setTimeout(() => {
+      battleFeedback = '';
+      battleFeedbackTimer = 0;
+      pickNextBattleQuestion();
+    }, 1500);
+  }
+}
+
+function onMonsterDefeated() {
+  score += 50;
+  sfxVictory();
+  defeatedList.push(activeMonster.id);
+  activeMonster.defeated = true;
+
+  // Chest teleports to a new random chamber
+  teleportChest(chestChamberIdx);
+
+  activeMonster = null;
+  battleQ = null;
+  battleFeedback = '';
+  battleFeedbackTimer = 0;
+  gs = S.DUNGEON;
+}
+
+function onPlayerDied() {
+  // Respawn player, bring back up to 2 defeated monsters
+  player.hp = player.maxHp;
+  player.x  = 2;
+  player.y  = 2;
+
+  const toRevive = Math.min(2, defeatedList.length);
+  for (let i = 0; i < toRevive; i++) {
+    const id = defeatedList.pop();
+    const m = monsters.find(m => m.id === id);
+    if (m) {
+      m.defeated = false;
+      m.hp = m.maxHp;
+    }
+  }
+
+  activeMonster = null;
+  battleQ = null;
+  battleFeedback = '';
+  battleFeedbackTimer = 0;
+  gs = S.DUNGEON;
+}
+
+// ── Chest challenge ───────────────────────────────────────────────
+function startChestChallenge() {
+  chestProgress = 0;
+  chestPool = shuffle(allQuestions());
+  pickNextChestQuestion();
+  chestFeedback = '';
+  chestFeedbackTimer = 0;
+  gs = S.CHEST;
+}
+
+function submitChestAnswer(idx) {
+  if (chestFeedbackTimer > 0) return;
+  const correct = idx === currentQ.ans;
+  if (correct) {
+    score += 20;
+    chestProgress++;
+    chestFeedback = '✓ Correct!';
+    sfxCorrect();
+    if (chestProgress >= 5) {
+      sfxChestWin();
+      stopBGM();
+      setTimeout(() => { gs = S.WIN; }, 2000);
+      return;
+    }
+    setTimeout(() => {
+      chestFeedback = '';
+      chestFeedbackTimer = 0;
+      pickNextChestQuestion();
+    }, 900);
+  } else {
+    chestFeedback = `✗ Wrong! Answer: ${currentQ.opts[currentQ.ans]} — Dungeon resets!`;
+    sfxWrong();
+    chestFeedbackTimer = 120;
+    setTimeout(fullReset, 2500);
+    return;
+  }
+  chestFeedbackTimer = 60;
+}
+
+function fullReset() {
+  stopBGM();
+  const savedScore = Math.max(0, score - 100);
+  initGame();
+  score = savedScore;
+  gs = S.DUNGEON;
+  startBGM();
+}
+
+// ── Audio Engine ─────────────────────────────────────────────────
+let AC = null;          // AudioContext (created on first gesture)
+let bgmActive = false;
+let bgmTimer  = null;
+let bgmNextTime = 0;
+
+function getAC() {
+  if (!AC) {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    // Master compressor prevents clipping when SFX + BGM overlap
+    const comp = AC.createDynamicsCompressor();
+    comp.threshold.value = -18;
+    comp.ratio.value = 4;
+    comp.connect(AC.destination);
+    AC._out = comp;
+  }
+  if (AC.state === 'suspended') AC.resume();
+  return AC;
+}
+
+function schedNote(freq, type, vol, t, dur) {
+  if (freq <= 0) return;
+  const ac = getAC();
+  const osc  = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.001, t);
+  gain.gain.linearRampToValueAtTime(vol, t + 0.012);
+  gain.gain.setValueAtTime(vol, t + dur * 0.65);
+  gain.gain.linearRampToValueAtTime(0.001, t + dur);
+  osc.connect(gain);
+  gain.connect(ac._out);
+  osc.start(t);
+  osc.stop(t + dur + 0.02);
+}
+
+// ── SFX ──────────────────────────────────────────────────────────
+function sfxMove() {
+  const ac = getAC(), t = ac.currentTime;
+  schedNote(330, 'square', 0.055, t, 0.04);
+}
+
+function sfxCorrect() {
+  const ac = getAC(), t = ac.currentTime;
+  [[523,0],[659,0.10],[784,0.20],[1047,0.32]].forEach(([f,d]) =>
+    schedNote(f, 'square', 0.17, t+d, 0.16));
+}
+
+function sfxWrong() {
+  const ac = getAC(), t = ac.currentTime;
+  schedNote(180, 'sawtooth', 0.22, t,      0.09);
+  schedNote(120, 'sawtooth', 0.22, t+0.11, 0.12);
+}
+
+function sfxVictory() {
+  const ac = getAC(), t = ac.currentTime;
+  [[392,0,0.14],[523,0.11,0.17],[659,0.22,0.19],[784,0.34,0.21],[1047,0.50,0.24]]
+    .forEach(([f,d,v]) => schedNote(f, 'square', v, t+d, 0.20));
+}
+
+function sfxChestWin() {
+  const ac = getAC(), t = ac.currentTime;
+  // Ascending run
+  [523,587,659,784,880,988,1047].forEach((f,i) =>
+    schedNote(f, 'square', 0.22, t + i*0.11, 0.18));
+  // Final chord
+  [523,659,784,1047].forEach(f =>
+    schedNote(f, 'square', 0.15, t + 0.88, 0.90));
+}
+
+// ── Background Music ──────────────────────────────────────────────
+// 8-bar dungeon theme in A natural minor, 112 BPM
+const _Q = 60 / 112; // quarter-note duration (≈ 0.536 s)
+
+// [freq_hz, duration_in_Q_beats]  — 0 = rest
+const BGM_MELODY = [
+  [440,2],[330,1],[392,1],       // bar 1 — A4.. E4 G4
+  [349,1],[261,1],[330,1],[0,1], // bar 2 — F4 C4 E4 rest
+  [294,2],[220,1],[196,1],       // bar 3 — D4.. A3 G3
+  [220,3],[0,1],                 // bar 4 — A3... rest
+  [330,2],[294,1],[261,1],       // bar 5 — E4.. D4 C4
+  [247,1],[220,1],[196,1],[0,1], // bar 6 — B3 A3 G3 rest
+  [261,2],[294,1],[330,1],       // bar 7 — C4.. D4 E4
+  [220,3],[0,1],                 // bar 8 — A3... rest
+];
+
+const BGM_BASS = [
+  [110,4],[110,4],   // bars 1-2 — A2
+  [87, 4],[110,4],   // bars 3-4 — F2, A2
+  [98, 4],[98, 4],   // bars 5-6 — G2
+  [110,4],[110,4],   // bars 7-8 — A2
+];
+
+function _scheduleBGMChunk(startT) {
+  let t = startT;
+  BGM_MELODY.forEach(([f, beats]) => {
+    const dur = beats * _Q;
+    schedNote(f,       'square',   0.07, t, dur * 0.80); // melody
+    schedNote(f * 0.5, 'triangle', 0.05, t, dur * 0.85); // melody octave below
+    t += dur;
+  });
+  t = startT;
+  BGM_BASS.forEach(([f, beats]) => {
+    const dur = beats * _Q;
+    schedNote(f, 'triangle', 0.09, t, dur * 0.88);
+    t += dur;
+  });
+  const total = BGM_MELODY.reduce((s,[,b]) => s + b*_Q, 0);
+  return total; // loop length in seconds
+}
+
+function _bgmSchedule() {
+  if (!bgmActive) return;
+  const ac = getAC();
+  if (bgmNextTime - ac.currentTime < 1.2) {
+    const dur = _scheduleBGMChunk(bgmNextTime);
+    bgmNextTime += dur;
+  }
+  bgmTimer = setTimeout(_bgmSchedule, 250);
+}
+
+function startBGM() {
+  if (bgmActive) return;
+  bgmActive = true;
+  const ac = getAC();
+  bgmNextTime = ac.currentTime + 0.15;
+  _bgmSchedule();
+}
+
+function stopBGM() {
+  bgmActive = false;
+  if (bgmTimer) { clearTimeout(bgmTimer); bgmTimer = null; }
+}
+
+// ── Input ─────────────────────────────────────────────────────────
+let moveRepeat = 0;
+let heldKey = '';
+
+const keyHandlers = {
+  [S.TITLE]: {
+    'Space': () => startGame(),
+    'Enter': () => startGame(),
+  },
+  [S.DUNGEON]: {},
+  [S.PROMPT]: {
+    'Space': () => startBattle(),
+    'Escape': () => { activeMonster = null; gs = S.DUNGEON; },
+    'KeyX': () => { activeMonster = null; gs = S.DUNGEON; },
+  },
+  [S.BATTLE]: {
+    'Digit1': () => submitBattleAnswer(0),
+    'Digit2': () => submitBattleAnswer(1),
+    'Digit3': () => submitBattleAnswer(2),
+    'Digit4': () => submitBattleAnswer(3),
+    'Enter': () => submitBattleAnswer(battleIdx),
+    'ArrowUp':   () => { battleIdx = (battleIdx + 3) % 4; },
+    'ArrowDown': () => { battleIdx = (battleIdx + 1) % 4; },
+  },
+  [S.CHEST]: {
+    'Digit1': () => submitChestAnswer(0),
+    'Digit2': () => submitChestAnswer(1),
+    'Digit3': () => submitChestAnswer(2),
+    'Digit4': () => submitChestAnswer(3),
+    'Enter': () => submitChestAnswer(battleIdx),
+    'ArrowUp':   () => { battleIdx = (battleIdx + 3) % 4; },
+    'ArrowDown': () => { battleIdx = (battleIdx + 1) % 4; },
+  },
+  [S.WIN]: {
+    'Space': () => startGame(),
+    'Enter': () => startGame(),
+  },
+  [S.OVER]: {
+    'Space': () => startGame(),
+    'Enter': () => startGame(),
+  },
+};
+
+const MOVE_DIRS = {
+  'ArrowUp':    [ 0, -1],
+  'ArrowDown':  [ 0,  1],
+  'ArrowLeft':  [-1,  0],
+  'ArrowRight': [ 1,  0],
+  'KeyW':       [ 0, -1],
+  'KeyS':       [ 0,  1],
+  'KeyA':       [-1,  0],
+  'KeyD':       [ 1,  0],
+};
+
+const keysDown = new Set();
+
+document.addEventListener('keydown', e => {
+  // Prevent page scrolling
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.key)) {
+    e.preventDefault();
+  }
+
+  const code = e.code;
+  if (!keysDown.has(code)) {
+    keysDown.add(code);
+    const handler = keyHandlers[gs] && keyHandlers[gs][code];
+    if (handler) handler();
+    // First-press movement
+    if (gs === S.DUNGEON && MOVE_DIRS[code]) {
+      const [dx, dy] = MOVE_DIRS[code];
+      tryMove(dx, dy);
+      heldKey = code;
+      moveRepeat = 0;
+    }
+  }
+});
+
+document.addEventListener('keyup', e => {
+  keysDown.delete(e.code);
+  if (e.code === heldKey) heldKey = '';
+});
+
+// ── Main loop ─────────────────────────────────────────────────────
+let lastTime = 0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  const dt = ts - lastTime;
+  lastTime = ts;
+
+  // Held key repeat for dungeon movement
+  if (gs === S.DUNGEON && heldKey && MOVE_DIRS[heldKey] && keysDown.has(heldKey)) {
+    moveRepeat += dt;
+    if (moveRepeat > 160) {
+      moveRepeat -= 100;
+      const [dx, dy] = MOVE_DIRS[heldKey];
+      tryMove(dx, dy);
+    }
+  }
+
+  // Decrement battle feedback timer
+  if (battleFeedbackTimer > 0) battleFeedbackTimer--;
+  if (chestFeedbackTimer > 0) chestFeedbackTimer--;
+
+  // Render
+  switch (gs) {
+    case S.TITLE:   drawTitle();  break;
+    case S.DUNGEON: drawDungeon(); break;
+    case S.PROMPT:  drawPrompt(); break;
+    case S.BATTLE:  drawBattle(); break;
+    case S.CHEST:   drawChest();  break;
+    case S.WIN:     drawWin();    break;
+    case S.OVER:    drawOver();   break;
+  }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────
+initGame();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
